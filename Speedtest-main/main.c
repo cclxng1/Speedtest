@@ -11,6 +11,7 @@ typedef struct {
     char provider[256];
     char host[256];
     int id;
+    double latency;
 } Server;   
 
 typedef struct {
@@ -54,7 +55,7 @@ int parse_servers(const char *json_data, Server *servers){
     }
     int count = 0;
     int array_size = cJSON_GetArraySize(json);
-    for(int i=0; i < array_size; i++){
+    for(int i=0; i<array_size; i++){
         cJSON *item = cJSON_GetArrayItem(json, i);
         cJSON *country = cJSON_GetObjectItem(item, "country");
         cJSON *city = cJSON_GetObjectItem(item, "city");
@@ -84,6 +85,13 @@ size_t callback(void *ptr, size_t size, size_t nmemb, void *userdata){
     memcpy(resp -> data + resp -> size, ptr, bytes);
     resp -> size += bytes;
     resp ->data[resp->size] = '\0';
+    return bytes;
+}
+
+size_t download_callback(void *ptr, size_t size, size_t nmemb, void *userdata){
+    size_t bytes = size * nmemb;
+    size_t *total = (size_t *) userdata;
+    *total += bytes;
     return bytes;
 }
 
@@ -124,6 +132,90 @@ int find_server_by_country(Server *servers, int count, const char *country, Serv
     return found;
 }
 
+int find_best_server(Server *servers, int count){
+    CURLM *multi = curl_multi_init();
+    CURL *handles[count];
+    int running = 0;
+    int best = 0;
+
+    for(int i=0; i<count; i++){
+        handles[i] = curl_easy_init();
+        char url[512];
+        snprintf(url, sizeof(url), "http://%s", servers[i].host);
+        curl_easy_setopt(handles[i], CURLOPT_URL, url);
+        curl_easy_setopt(handles[i], CURLOPT_NOBODY, 1L);
+        curl_easy_setopt(handles[i], CURLOPT_TIMEOUT, 3L);
+        curl_multi_add_handle(multi, handles[i]);
+    }
+
+    do {
+        curl_multi_perform(multi, &running);
+        curl_multi_wait(multi, NULL, 0 , 100, NULL);
+    } while (running > 0);
+
+    for(int i=0; i<count; i++){
+        double total_time = 0;
+        CURLcode res;
+        res = curl_easy_getinfo(handles[i], CURLINFO_TOTAL_TIME, &total_time);
+        if(res == CURLE_OK){
+            servers[i].latency = total_time;
+            printf("Server %s - %.2f ms\n", servers[i].host, total_time * 1000);
+        } else {
+            servers[i].latency = 999;
+        }
+        if(servers[i].latency < servers[best].latency){
+            best = i;
+        }
+        curl_multi_remove_handle(multi, handles[i]);
+        curl_easy_cleanup(handles[i]);
+    }
+
+    curl_multi_cleanup(multi);
+    return best;
+}
+
+double download_test(const char *host){
+    CURLM *multi = curl_multi_init();
+    int num_connections = 4;
+    int running = 0;
+    CURL *handles[4];
+    size_t bytes[4] = {0, 0, 0, 0};
+    char url[512];
+    snprintf(url, sizeof(url), "http://%s/download?size=25000000", host);
+    
+    for(int i=0; i < num_connections; i++){
+        handles[i] = curl_easy_init();
+        curl_easy_setopt(handles[i], CURLOPT_URL, url);
+        curl_easy_setopt(handles[i], CURLOPT_WRITEFUNCTION, download_callback);
+        curl_easy_setopt(handles[i], CURLOPT_WRITEDATA, &bytes[i]);
+        curl_easy_setopt(handles[i], CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(handles[i], CURLOPT_USERAGENT, "SpeedTest");
+        curl_multi_add_handle(multi, handles[i]);
+    }
+
+    do {
+        curl_multi_perform(multi, &running);
+        curl_multi_wait(multi, NULL, 0, 100, NULL);
+    } while (running > 0);
+
+    double total_time = 0;
+    curl_easy_getinfo(handles[0], CURLINFO_TOTAL_TIME, &total_time);
+    
+    size_t total_bytes = 0;
+    for(int i=0; i < num_connections; i++){
+        printf("Connection %d: %zu bytes\n", i, bytes[i]);
+        total_bytes += bytes[i];
+        curl_multi_remove_handle(multi, handles[i]);
+        curl_easy_cleanup(handles[i]);
+    }
+
+    curl_multi_cleanup(multi);
+
+    double speed_mbps = (total_bytes * 8.0) / (total_time * 1000000);
+    printf("Download speed: %.2f Mbps \n", speed_mbps);
+    return speed_mbps;
+}
+
 int main(int argc, char *argv[]){
 
     char *data = read_file("speedtest_server_list.json");
@@ -156,6 +248,7 @@ int main(int argc, char *argv[]){
         switch (opt){
                 case 'a' :
                 printf("Download test with server: %s\n", optarg);
+                download_test(optarg);
                 break;
                 case 'b' :
                 printf("Upload test with server: %s\n", optarg);
@@ -164,6 +257,8 @@ int main(int argc, char *argv[]){
                 detect_location(country,city);
                 int found = find_server_by_country(servers, count, country, results);
                 printf("Found %d servers in %s\n", found, country);
+                int best = find_best_server(results, found);
+                printf("Best server: %s (%s) - %.2f ms\n", results[best].host, results[best].city, results[best].latency * 1000);
                 break;
                 case 'd' :
                 printf("Finding best server...\n");
