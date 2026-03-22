@@ -1,2 +1,0 @@
-# Speedtest
-Teltonika darbas
