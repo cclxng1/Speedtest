@@ -38,6 +38,10 @@ size_t upload_callback(void *ptr, size_t size, size_t nmemb, void *userdata){
     return to_send;
 }
 
+size_t discard_callback(void *ptr, size_t size, size_t nmemb, void *usedata){
+    return size * nmemb;
+}
+
 void detect_location(char *country, char *city){
     CURL *curl = curl_easy_init();
     if(!curl){
@@ -143,6 +147,7 @@ double upload_test(const char *host){
         curl_easy_setopt(handles[i], CURLOPT_POSTFIELDSIZE, (long)uploads[i].total);
         curl_easy_setopt(handles[i], CURLOPT_READFUNCTION, upload_callback);
         curl_easy_setopt(handles[i], CURLOPT_READDATA, &uploads[i]);
+        curl_easy_setopt(handles[i], CURLOPT_WRITEFUNCTION, discard_callback);
         curl_easy_setopt(handles[i], CURLOPT_TIMEOUT, 15L);
         curl_easy_setopt(handles[i], CURLOPT_USERAGENT, "TeltonikaTest");
         curl_easy_setopt(handles[i], CURLOPT_FOLLOWLOCATION, 1L);
