@@ -16,6 +16,7 @@ typedef struct {
 size_t callback(void *ptr, size_t size, size_t nmemb, void *userdata);
 size_t download_callback(void *ptr, size_t size, size_t nmemb, void *userdata);
 size_t upload_callback(void *ptr, size_t size, size_t nmemb, void *userdata);
+size_t discard_callback(void *ptr, size_t size, size_t nmemb, void *userdata);
 void detect_location(char *country, char *city);
 double download_test(const char *host);
 double upload_test(const char *host);
